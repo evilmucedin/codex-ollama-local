@@ -114,6 +114,46 @@ def test_build_model_catalog_clones_and_keeps_bundled(run_mod: ModuleType) -> No
     assert "Ollama" in added["description"]
 
 
+def test_build_model_catalog_neutralizes_incompatible_capabilities(
+    run_mod: ModuleType,
+) -> None:
+    # A cloud template (like Codex's real bundled entries) advertises web search,
+    # image input, verbosity, and freeform apply_patch -- all of which make Codex
+    # emit request items the Ollama endpoint rejects ("unknown input item type").
+    bundled = {
+        "models": [
+            {
+                "slug": "gpt-5.6-sol",
+                "supports_search_tool": True,
+                "web_search_tool_type": "text_and_image",
+                "support_verbosity": True,
+                "input_modalities": ["text", "image"],
+                "apply_patch_tool_type": "freeform",
+                "supports_parallel_tool_calls": True,
+            }
+        ]
+    }
+    catalog = run_mod.build_model_catalog(["qwen:7b"], bundled)
+    added = catalog["models"][-1]
+    assert added["supports_search_tool"] is False
+    assert added["support_verbosity"] is False
+    assert added["input_modalities"] == ["text"]
+    assert added["apply_patch_tool_type"] == "function"
+    # Fields we don't override are carried through untouched.
+    assert added["supports_parallel_tool_calls"] is True
+    # The original bundled template is not mutated by the clone.
+    assert bundled["models"][0]["supports_search_tool"] is True
+
+
+def test_localize_entry_only_touches_present_keys(run_mod: ModuleType) -> None:
+    # Keys absent from the template must not be introduced (that would make Codex
+    # reject the whole catalog as an unknown field).
+    entry = run_mod._localize_entry({"slug": "x"}, "qwen:7b")
+    assert entry["slug"] == "qwen:7b"
+    assert "supports_search_tool" not in entry
+    assert "apply_patch_tool_type" not in entry
+
+
 def test_build_model_catalog_prefers_oss_template(run_mod: ModuleType) -> None:
     bundled = {
         "models": [
