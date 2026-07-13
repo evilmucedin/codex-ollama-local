@@ -1,0 +1,5 @@
+# Development dependencies. Prefer `pip install -e .[dev]`, which installs the
+# runtime deps plus these. This file is kept for convenience / pinning.
+black>=24.0
+flake8>=7.0
+pytest>=8.0
