@@ -6,7 +6,28 @@ models and holds streaming chats; it is being built toward a full agentic coding
 assistant (file edits, tool use, shell execution). See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and roadmap.
 
-Works on **Linux, Windows, and macOS**.
+Works on **Ubuntu (Linux), Windows, and macOS**.
+
+## Quickstart
+
+Two helper scripts at the repo root bootstrap and launch the toolchain — they use
+only the Python standard library, so you can run them on a clean machine:
+
+```bash
+# 1. Install the Codex CLI and the Ollama server (skips whatever is already present)
+python install.py
+
+# 2. Pull a local model
+ollama pull gpt-oss:20b
+
+# 3. Launch the Codex agent against your local Ollama
+python run.py
+```
+
+`install.py` is idempotent (re-running is safe); use `--dry-run` to preview the
+commands or `--force` to reinstall. `run.py` starts `ollama serve` automatically if
+it is not already running, then launches `codex --oss`; pass `-m <model>` to pick a
+model and forward extra flags to Codex after `--` (e.g. `python run.py -- --help`).
 
 ## Requirements
 

@@ -14,7 +14,7 @@ drift between the two.
 - Setup: `pip install -e .[dev]` (Python 3.11+).
 - Before committing, always run: `black --check . && flake8 && pytest`.
 - Tests are offline — never require a live Ollama or network access.
-- Everything must work on Linux, Windows, and macOS; use `pathlib`, not raw paths.
+- Everything must work on Ubuntu, Windows, and macOS; use `pathlib`, not raw paths.
 
 For anything beyond this, defer to [`AGENTS.md`](AGENTS.md) and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

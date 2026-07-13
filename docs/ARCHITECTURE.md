@@ -8,7 +8,7 @@ for LLM CLI agents extending the codebase.
 
 - A **local-first** coding CLI agent: no cloud API keys, everything runs against a
   local [Ollama](https://ollama.com) server.
-- **Cross-platform**: identical behavior on Linux, Windows, and macOS.
+- **Cross-platform**: identical behavior on Ubuntu (Linux), Windows, and macOS.
 - **Small, dependency-light core** (`httpx` at runtime) that is easy to test
   fully offline.
 - A clear path from "chat with a model" to "agent that edits code and runs tools".
@@ -67,6 +67,20 @@ Immutable dataclasses with no third-party imports:
 - `argparse` with subcommands `models` and `chat`, plus global `--host`/`--model`.
 - `main(argv=None) -> int` returns an exit code (no `sys.exit` inside) so it is
   directly testable; `__main__.py` and the `col` console script wrap it.
+
+### Root scripts: `install.py` / `run.py`
+Standalone bootstrap/launch scripts that sit outside the package and use **only the
+standard library** (so `install.py` runs on a clean machine before anything is
+installed):
+- `install.py` — installs the **Codex CLI** (`npm i -g @openai/codex`) and the
+  **Ollama** server, choosing the right command per OS (Ubuntu convenience script /
+  Homebrew / winget). Idempotent: each tool is skipped if already on `PATH`.
+- `run.py` — ensures Ollama is reachable (auto-starting `ollama serve` if needed),
+  then launches `codex --oss -m <model>`, forwarding extra args to Codex. This is
+  how the project realizes "Codex, but against local models".
+
+Both keep side effects in small injectable functions; tests mock every subprocess
+and HTTP call.
 
 ## Data flow: `col chat "..."`
 
