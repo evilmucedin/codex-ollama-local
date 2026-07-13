@@ -118,8 +118,10 @@ def test_build_model_catalog_neutralizes_incompatible_capabilities(
     run_mod: ModuleType,
 ) -> None:
     # A cloud template (like Codex's real bundled entries) advertises web search,
-    # image input, and verbosity -- which make Codex emit request items the Ollama
-    # endpoint rejects ("unknown input item type"). We disable those.
+    # Responses Lite, image input, and verbosity -- which make Codex emit request
+    # items the Ollama endpoint rejects ("unknown input item type": web_search_call
+    # from supports_search_tool, additional_tools from use_responses_lite). We
+    # disable those.
     bundled = {
         "models": [
             {
@@ -127,6 +129,7 @@ def test_build_model_catalog_neutralizes_incompatible_capabilities(
                 "supports_search_tool": True,
                 "web_search_tool_type": "text_and_image",
                 "support_verbosity": True,
+                "use_responses_lite": True,
                 "input_modalities": ["text", "image"],
                 "apply_patch_tool_type": "freeform",
                 "supports_parallel_tool_calls": True,
@@ -137,6 +140,7 @@ def test_build_model_catalog_neutralizes_incompatible_capabilities(
     added = catalog["models"][-1]
     assert added["supports_search_tool"] is False
     assert added["support_verbosity"] is False
+    assert added["use_responses_lite"] is False
     assert added["input_modalities"] == ["text"]
     # Enum-valued fields are left untouched: substituting a variant the installed
     # Codex doesn't accept (e.g. apply_patch_tool_type "function") would make it
@@ -154,6 +158,7 @@ def test_localize_entry_only_touches_present_keys(run_mod: ModuleType) -> None:
     entry = run_mod._localize_entry({"slug": "x"}, "qwen:7b")
     assert entry["slug"] == "qwen:7b"
     assert "supports_search_tool" not in entry
+    assert "use_responses_lite" not in entry
     assert "apply_patch_tool_type" not in entry
 
 
