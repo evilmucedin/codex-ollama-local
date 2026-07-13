@@ -24,7 +24,7 @@ pip install -e .[dev]
 
 ## Checks
 
-Run all three before pushing — CI runs them on Linux, Windows, and macOS:
+Run all three before pushing — CI runs them on Ubuntu, Windows, and macOS:
 
 ```bash
 black .            # format (use --check in CI)

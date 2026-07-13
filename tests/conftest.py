@@ -6,7 +6,10 @@ so the entire suite runs offline and deterministically on every platform.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+from pathlib import Path
+from types import ModuleType
 from typing import Callable
 
 import httpx
@@ -14,6 +17,33 @@ import pytest
 
 from codex_ollama.config import Config
 from codex_ollama.ollama_client import OllamaClient
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_script(name: str) -> ModuleType:
+    """Import a top-level script (``install.py`` / ``run.py``) by file path.
+
+    These live at the repo root rather than in the installed package, so they are
+    loaded explicitly instead of via a normal import.
+    """
+
+    path = _PROJECT_ROOT / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="session")
+def install_mod() -> ModuleType:
+    return load_script("install")
+
+
+@pytest.fixture(scope="session")
+def run_mod() -> ModuleType:
+    return load_script("run")
 
 
 def make_client(handler: Callable[[httpx.Request], httpx.Response]) -> OllamaClient:

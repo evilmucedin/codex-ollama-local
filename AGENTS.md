@@ -15,6 +15,8 @@ The console command is `col`.
 ## Repository layout
 
 ```
+install.py             Bootstrap script: installs Codex CLI + Ollama (stdlib only)
+run.py                 Launcher: starts `codex --oss` against local Ollama (stdlib only)
 src/codex_ollama/      Package source (src layout)
   cli.py               argparse CLI, entry point `main`
   config.py            Config dataclass + cross-platform config dir
@@ -22,8 +24,18 @@ src/codex_ollama/      Package source (src layout)
   types.py             Message / ChatChunk / ModelInfo dataclasses
 tests/                 pytest suite (offline; httpx.MockTransport)
 docs/ARCHITECTURE.md   Design and roadmap
-.github/workflows/     CI (lint + tests on Linux/Windows/macOS)
+.github/workflows/     CI (lint + tests on Ubuntu/Windows/macOS)
 ```
+
+### Root scripts (`install.py`, `run.py`)
+
+These are **standard-library only** on purpose: `install.py` must run on a clean
+machine before the package (or its deps) exist, so do not import `codex_ollama` or
+third-party libraries from them. Keep the logic in small, mockable functions (see
+how `subprocess`/network calls are injected) — tests load these scripts by path via
+the `install_mod` / `run_mod` fixtures in `tests/conftest.py` and mock every
+subprocess and network call, so the suite never installs anything or hits the
+network.
 
 ## Environment setup
 
@@ -73,4 +85,4 @@ on all three operating systems.
 - Small, focused commits; imperative subject lines (e.g. "Add chat streaming").
 - Ensure `black --check . && flake8 && pytest` pass before pushing.
 - PRs should describe the change, note test coverage, and confirm cross-platform
-  safety. CI must be green on Linux, Windows, and macOS.
+  safety. CI must be green on Ubuntu, Windows, and macOS.
