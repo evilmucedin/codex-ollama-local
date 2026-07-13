@@ -135,17 +135,25 @@ untouched.
 
 Codex's bundled catalog currently ships **only cloud models** (no `gpt-oss` entry), so
 the template we clone is typically a cloud entry that advertises capabilities — web
-search, image input, verbosity, freeform (`custom`-tool) `apply_patch` — whose
-Responses-API request items a local Ollama endpoint rejects with `unknown input item
-type` (see Codex issue #24612 for the `web_search_call` case). So when retargeting a
-clone to a local model, `run.py` also forces a locally-compatible capability profile
-(`supports_search_tool=false`, `input_modalities=["text"]`, `support_verbosity=false`,
-`apply_patch_tool_type="function"`). To stay schema-valid it only overwrites keys that
-already exist in the template — introducing an unknown key would make Codex discard the
-entire catalog.
+search, image input, verbosity — whose Responses-API request items a local Ollama
+endpoint rejects with `unknown input item type` (see Codex issue #24612 for the
+`web_search_call` case). So when retargeting a clone to a local model, `run.py` also
+forces a locally-compatible capability profile (`supports_search_tool=false`,
+`input_modalities=["text"]`, `support_verbosity=false`).
 
-This is best-effort and never fatal: if `codex debug models` is unavailable (older
-Codex) or the file can't be written, `run.py` warns and launches plain `codex --oss`.
+Two rules keep the override schema-valid across Codex releases. First, `run.py` only
+overwrites keys that already exist in the template — introducing an unknown key would
+make Codex discard the entire catalog. Second, it only substitutes *safe* values:
+booleans, or a subset of an existing list. It deliberately does **not** rewrite
+enum-valued fields such as `apply_patch_tool_type`, because a guessed variant that the
+installed Codex doesn't accept makes it reject the whole file (`unknown variant
+"function", expected "freeform"`); the cloned template already carries a valid value.
+
+This is best-effort and never fatal. As a backstop against any remaining schema drift,
+`run.py` validates the generated catalog by asking Codex to parse it (`catalog_accepted`
+runs `codex debug models -c model_catalog_json="…"` and checks the exit code); if Codex
+rejects it — or if `codex debug models` is unavailable (older Codex) or the file can't
+be written — `run.py` warns and launches plain `codex --oss`.
 
 ## Data flow: `col chat "..."`
 

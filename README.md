@@ -53,13 +53,15 @@ skips the remote catalog refresh), so **your local Ollama models don't appear th
 `run.py` fixes this: it reads Codex's own bundled catalog (`codex debug models
 --bundled`, so the entries stay schema-correct for whatever Codex version you have),
 adds one entry per installed Ollama model (each configured for local compatibility —
-web search off, text-only, plain function-call `apply_patch` — so Codex doesn't send
-requests Ollama rejects with `unknown input item type`), writes the result to
+web search off, text-only, verbosity off — so Codex doesn't send requests Ollama
+rejects with `unknown input item type`), writes the result to
 `$CODEX_HOME/col-ollama-catalog.json` (default `~/.codex/…`), and launches Codex with
 `-c model_catalog_json="…"` for that run — no edits to your `config.toml`. The cloud
-models stay listed alongside your local ones. Pass `--no-catalog` to opt out. If your
-Codex build lacks `codex debug models`, `run.py` prints a warning and launches plain
-`codex --oss` (so it never fails on this).
+models stay listed alongside your local ones. Pass `--no-catalog` to opt out. Before
+launching, `run.py` asks Codex to parse the generated catalog (`codex debug models -c
+model_catalog_json="…"`); if Codex's schema has drifted and it rejects the file,
+`run.py` warns and launches plain `codex --oss` instead of failing to start. Likewise
+if your Codex build lacks `codex debug models`.
 
 ## Requirements
 
