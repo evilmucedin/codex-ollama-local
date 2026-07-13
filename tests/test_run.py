@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -123,17 +124,21 @@ def test_supports_launch_true_false(run_mod: ModuleType) -> None:
 
 
 # -- codex discovery -------------------------------------------------------
-def test_npm_global_bin_dir_posix(
+def test_npm_global_bin_dir(
     run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(run_mod, "command_exists", lambda name: True)
-    monkeypatch.setattr(run_mod.os, "name", "posix")
 
     def runner(cmd, capture_output, text):
         assert cmd == ["npm", "prefix", "-g"]
         return SimpleNamespace(stdout="/home/u/.npm-global\n", stderr="")
 
-    assert run_mod.npm_global_bin_dir(runner=runner) == "/home/u/.npm-global/bin"
+    # Expected value mirrors the helper's own pathlib ops, so it stays correct on
+    # POSIX (<prefix>/bin) and Windows (<prefix>) without patching os.name (which
+    # would break pathlib). Each OS branch is exercised natively by the CI matrix.
+    prefix = pathlib.Path("/home/u/.npm-global")
+    expected = prefix if run_mod.os.name == "nt" else prefix / "bin"
+    assert run_mod.npm_global_bin_dir(runner=runner) == str(expected)
 
 
 def test_npm_global_bin_dir_none_without_npm(

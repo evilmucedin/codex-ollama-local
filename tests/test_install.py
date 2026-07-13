@@ -5,6 +5,7 @@ All subprocess calls are mocked, so nothing is actually installed.
 
 from __future__ import annotations
 
+import pathlib
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -160,17 +161,20 @@ def test_main_reports_unsupported_os(
 
 
 # -- codex PATH verification -----------------------------------------------
-def test_npm_global_bin_dir_posix(
+def test_npm_global_bin_dir(
     install_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(install_mod, "command_exists", lambda name: True)
-    monkeypatch.setattr(install_mod.os, "name", "posix")
     monkeypatch.setattr(
         install_mod.subprocess,
         "run",
         lambda cmd, capture_output, text: SimpleNamespace(stdout="/usr/local\n"),
     )
-    assert install_mod.npm_global_bin_dir() == "/usr/local/bin"
+    # Mirror the helper's pathlib ops so the assertion holds on every OS without
+    # patching os.name (which would make pathlib build a PosixPath on Windows).
+    prefix = pathlib.Path("/usr/local")
+    expected = prefix if install_mod.os.name == "nt" else prefix / "bin"
+    assert install_mod.npm_global_bin_dir() == str(expected)
 
 
 def test_warn_if_codex_unreachable_warns(
