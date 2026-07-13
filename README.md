@@ -42,8 +42,10 @@ python run.py --config-only   # configure Codex for Ollama without launching it
 python run.py -- --sandbox workspace-write   # forward flags to Codex
 ```
 
-> Requires an Ollama version that provides `ollama launch codex` (installed by
-> `install.py`). `run.py` checks for it and tells you to update Ollama if it is missing.
+> The `ollama launch codex` integration is only in newer Ollama builds. On older
+> ones, `run.py` automatically falls back to launching `codex --oss -m <model>`
+> against your local server, so it still starts (update Ollama to get the full
+> multi-model catalog). `--config-only` needs the integration.
 
 ## Requirements
 

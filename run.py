@@ -17,6 +17,10 @@ hand-writing ``~/.codex`` config and the strict ``model_catalog.json`` ourselves
 Ollama keeps that integration in sync with Codex across versions, so this stays
 correct as both tools evolve.
 
+Older Ollama builds do not ship the ``launch`` integration. Rather than refuse to
+start there, we fall back to launching ``codex --oss -m <model>`` directly against
+the local server -- the approach that worked before the integration existed.
+
 Uses only the Python standard library. Cross-platform: Ubuntu, macOS, Windows.
 
 Usage::
@@ -41,6 +45,9 @@ import urllib.request
 from typing import List, Optional, Sequence
 
 DEFAULT_HOST = "http://localhost:11434"
+# Used only by the ``codex --oss`` fallback, which needs a concrete model when the
+# ``ollama launch codex`` integration is unavailable.
+DEFAULT_MODEL = "gpt-oss:20b"
 ENV_HOST = "OLLAMA_HOST"
 ENV_MODEL = "CODEX_OLLAMA_MODEL"
 
@@ -184,6 +191,18 @@ def build_launch_command(
     return cmd
 
 
+def build_codex_oss_command(model: str, extra_args: Sequence[str]) -> List[str]:
+    """Build the ``codex --oss`` command used as a fallback.
+
+    This is the launch path for Ollama builds without the ``ollama launch codex``
+    integration: it points Codex's open-source mode straight at the local Ollama
+    server (via ``OLLAMA_HOST``) with ``model`` as the default. Extra args are
+    forwarded to Codex.
+    """
+
+    return ["codex", "--oss", "-m", model, *list(extra_args)]
+
+
 def resolve_model(
     cli_model: Optional[str],
     available: Sequence[str],
@@ -273,10 +292,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 2
 
-    if not ollama_supports_launch():
+    # Prefer the first-party `ollama launch codex` integration (it exposes every
+    # local model to Codex). Older Ollama builds lack it, so we fall back to
+    # launching `codex --oss` directly rather than refusing to start.
+    supports_launch = ollama_supports_launch()
+    if args.config_only and not supports_launch:
         print(
-            "error: this Ollama version does not support `ollama launch codex`. "
-            "Update Ollama (see https://ollama.com/download) and try again.",
+            "error: --config-only needs `ollama launch codex`, which this Ollama "
+            "version does not support. Update Ollama (see "
+            "https://ollama.com/download) and try again.",
             file=sys.stderr,
         )
         return 2
@@ -301,13 +325,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
 
-    try:
-        model = resolve_model(args.model, models, required=args.yes)
-    except RunError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+    if supports_launch:
+        try:
+            model = resolve_model(args.model, models, required=args.yes)
+        except RunError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        cmd = build_launch_command(
+            model, extra, config_only=args.config_only, yes=args.yes
+        )
+    else:
+        print(
+            "note: this Ollama build has no `ollama launch codex` integration; "
+            "falling back to `codex --oss`.",
+            file=sys.stderr,
+        )
+        # codex --oss always needs a concrete default model.
+        model = args.model or env_model() or (models[0] if models else DEFAULT_MODEL)
+        cmd = build_codex_oss_command(model, extra)
 
-    cmd = build_launch_command(model, extra, config_only=args.config_only, yes=args.yes)
     print(f"$ {' '.join(cmd)}")
     if args.dry_run:
         return 0

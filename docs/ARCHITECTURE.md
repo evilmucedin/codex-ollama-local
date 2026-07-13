@@ -100,13 +100,18 @@ and clean error messages when a prerequisite is missing.
 `run.py` flow:
 1. Verify `ollama` (and, when launching, `codex`) are installed — else point at
    `install.py`.
-2. Verify the Ollama build supports `ollama launch codex` — else advise updating.
+2. Detect whether the Ollama build supports `ollama launch codex`.
 3. Ensure the server is running (auto-start unless `--no-serve`; skipped on `--dry-run`).
 4. List local models via `GET /api/tags` and report them.
 5. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed when a
    model is required, e.g. headless `-y`).
 6. Build and run `ollama launch codex [--model M] [-y] [--config] [-- <codex args>]`
    with `OLLAMA_HOST` set; `--dry-run` prints the command instead.
+
+If the `ollama launch codex` integration is absent (older Ollama), step 6 falls back
+to `codex --oss -m <model>` (default model `--model` > `$CODEX_OLLAMA_MODEL` > first
+installed > `gpt-oss:20b`) — the pre-integration launch path — so `run.py` still starts
+Codex instead of erroring. `--config-only` has no fallback and requires the integration.
 
 ## Data flow: `col chat "..."`
 

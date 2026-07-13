@@ -18,6 +18,17 @@ def test_build_launch_command_minimal(run_mod: ModuleType) -> None:
     assert run_mod.build_launch_command(None, []) == ["ollama", "launch", "codex"]
 
 
+def test_build_codex_oss_command(run_mod: ModuleType) -> None:
+    assert run_mod.build_codex_oss_command("m:1", ["--sandbox", "read-only"]) == [
+        "codex",
+        "--oss",
+        "-m",
+        "m:1",
+        "--sandbox",
+        "read-only",
+    ]
+
+
 def test_build_launch_command_full(run_mod: ModuleType) -> None:
     cmd = run_mod.build_launch_command(
         "qwen2.5-coder:7b",
@@ -184,15 +195,75 @@ def test_main_errors_when_codex_missing(
     assert "Codex" in capsys.readouterr().err
 
 
-def test_main_errors_without_launch_support(
+def test_main_falls_back_to_codex_oss_without_launch_support(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.delenv("CODEX_OLLAMA_MODEL", raising=False)
+    _patch_common(run_mod, monkeypatch, models=("a:1", "b:2"))
+    monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: False)
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd, env=env)
+        or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main(["--", "--sandbox", "read-only"]) == 0
+    # First installed model becomes the default; extra args forwarded to Codex.
+    assert captured["cmd"] == [
+        "codex",
+        "--oss",
+        "-m",
+        "a:1",
+        "--sandbox",
+        "read-only",
+    ]
+    assert captured["env"]["OLLAMA_HOST"]
+    assert "falling back to `codex --oss`" in capsys.readouterr().err
+
+
+def test_main_fallback_uses_default_model_when_none_installed(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CODEX_OLLAMA_MODEL", raising=False)
+    _patch_common(run_mod, monkeypatch, models=())
+    monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: False)
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd) or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main([]) == 0
+    assert captured["cmd"] == ["codex", "--oss", "-m", run_mod.DEFAULT_MODEL]
+
+
+def test_main_fallback_respects_explicit_model(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=("a:1",))
+    monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: False)
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd) or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main(["-m", "chosen:1"]) == 0
+    assert captured["cmd"] == ["codex", "--oss", "-m", "chosen:1"]
+
+
+def test_main_config_only_errors_without_launch_support(
     run_mod: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(run_mod, "command_exists", lambda name: True)
     monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: False)
-    assert run_mod.main([]) == 2
-    assert "launch codex" in capsys.readouterr().err
+    assert run_mod.main(["--config-only", "-y", "-m", "m:1"]) == 2
+    assert "--config-only" in capsys.readouterr().err
 
 
 def test_main_launches_with_all_models(

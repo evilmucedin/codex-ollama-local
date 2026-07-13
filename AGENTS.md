@@ -16,7 +16,7 @@ The console command is `col`.
 
 ```
 install.py             Bootstrap script: installs Codex CLI + Ollama (stdlib only)
-run.py                 Launcher: `ollama launch codex` with all local models (stdlib only)
+run.py                 Launcher: `ollama launch codex` (falls back to `codex --oss`) (stdlib only)
 src/codex_ollama/      Package source (src layout)
   cli.py               argparse CLI, entry point `main`
   config.py            Config dataclass + cross-platform config dir
