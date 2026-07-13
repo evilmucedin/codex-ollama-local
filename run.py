@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
-"""Start the Codex coding agent with access to every local Ollama model.
+"""Start the OpenAI Codex CLI against the local Ollama server.
 
-The heavy lifting is done by Ollama's built-in Codex integration,
-``ollama launch codex``, which refreshes Codex's *model catalog* from the local
-Ollama server (so **all** installed models become selectable inside Codex) and
-applies a dedicated Codex profile before launching it. This script wraps that
+This launches the real Codex CLI in its local open-source mode
+(``codex --oss -m <model>``), which points Codex straight at a local
+[Ollama](https://ollama.com) server (``http://localhost:11434/v1``) and uses a
+locally installed model -- no cloud API key required. This script wraps that
 command with the ergonomics we want:
 
   * make sure the Ollama server is actually running (starting it if needed);
-  * report which local models Codex will have access to;
-  * pick a sensible default model when one is required;
+  * report which local models are available;
+  * pick a sensible default model to hand to Codex;
   * forward any extra arguments straight through to Codex.
 
-We deliberately delegate the Codex configuration to ``ollama launch`` rather than
-hand-writing ``~/.codex`` config and the strict ``model_catalog.json`` ourselves:
-Ollama keeps that integration in sync with Codex across versions, so this stays
-correct as both tools evolve.
-
-Older Ollama builds do not ship the ``launch`` integration. Rather than refuse to
-start there, we fall back to launching ``codex --oss -m <model>`` directly against
-the local server -- the approach that worked before the integration existed.
+``-m`` sets Codex's default model; Codex can still switch models in-session with
+``/model``.
 
 Uses only the Python standard library. Cross-platform: Ubuntu, macOS, Windows.
 
 Usage::
 
-    python run.py                       # launch Codex with all local models
-    python run.py -m qwen2.5-coder:7b   # set the default model
-    python run.py --config-only -y      # configure Codex without launching
+    python run.py                       # launch Codex against a local model
+    python run.py -m qwen2.5-coder:7b   # pick the default model
+    python run.py --no-serve            # do not auto-start `ollama serve`
     python run.py --dry-run             # show what would run, change nothing
     python run.py -- --sandbox workspace-write   # forward flags to Codex
 """
@@ -46,8 +40,8 @@ import urllib.request
 from typing import List, Optional, Sequence
 
 DEFAULT_HOST = "http://localhost:11434"
-# Used only by the ``codex --oss`` fallback, which needs a concrete model when the
-# ``ollama launch codex`` integration is unavailable.
+# Codex's own default OSS model; used when nothing else is specified and no
+# local models are installed yet.
 DEFAULT_MODEL = "gpt-oss:20b"
 ENV_HOST = "OLLAMA_HOST"
 ENV_MODEL = "CODEX_OLLAMA_MODEL"
@@ -152,24 +146,6 @@ def list_ollama_models(host: str, *, timeout: float = 2.0, opener=None) -> List[
     return [name for name in names if name]
 
 
-def ollama_supports_launch(runner=None) -> bool:
-    """True if the installed Ollama exposes the ``launch codex`` integration."""
-
-    runner = runner or subprocess.run
-    try:
-        result = runner(
-            ["ollama", "launch", "--help"],
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return False
-    output = (getattr(result, "stdout", "") or "") + (
-        getattr(result, "stderr", "") or ""
-    )
-    return "codex" in output
-
-
 def _spawn_ollama_serve() -> "subprocess.Popen":
     """Start ``ollama serve`` detached, discarding its output."""
 
@@ -213,79 +189,38 @@ def ensure_ollama_running(
     )
 
 
-def build_launch_command(
-    model: Optional[str],
-    extra_args: Sequence[str],
-    *,
-    config_only: bool = False,
-    yes: bool = False,
-) -> List[str]:
-    """Build the ``ollama launch codex`` command line.
+def build_codex_command(model: str, extra_args: Sequence[str]) -> List[str]:
+    """Build the ``codex --oss`` command that launches the Codex CLI.
 
-    ``--model`` is included only when ``model`` is set; ``extra_args`` are
-    forwarded to Codex after a ``--`` separator.
-    """
-
-    cmd = ["ollama", "launch", "codex"]
-    if model:
-        cmd += ["--model", model]
-    if yes:
-        cmd.append("-y")
-    if config_only:
-        cmd.append("--config")
-    if extra_args:
-        cmd += ["--", *list(extra_args)]
-    return cmd
-
-
-def build_codex_oss_command(model: str, extra_args: Sequence[str]) -> List[str]:
-    """Build the ``codex --oss`` command used as a fallback.
-
-    This is the launch path for Ollama builds without the ``ollama launch codex``
-    integration: it points Codex's open-source mode straight at the local Ollama
-    server (via ``OLLAMA_HOST``) with ``model`` as the default. Extra args are
-    forwarded to Codex.
+    ``--oss`` puts Codex in its local open-source mode, talking to the Ollama
+    server (via ``OLLAMA_HOST``); ``-m`` sets ``model`` as the default. Extra
+    args are forwarded to Codex unchanged.
     """
 
     return ["codex", "--oss", "-m", model, *list(extra_args)]
 
 
-def resolve_model(
-    cli_model: Optional[str],
-    available: Sequence[str],
-    *,
-    required: bool,
-) -> Optional[str]:
-    """Decide which model to pass to ``ollama launch``.
+def resolve_model(cli_model: Optional[str], available: Sequence[str]) -> str:
+    """Pick the default model to hand to Codex.
 
-    Precedence: explicit ``--model`` > ``$CODEX_OLLAMA_MODEL`` > (when a model is
-    required, e.g. headless mode) the first installed model. Returns ``None`` when
-    no model is needed and none was requested, letting Codex offer the full list.
+    Precedence: explicit ``--model`` > ``$CODEX_OLLAMA_MODEL`` > the first
+    installed model > :data:`DEFAULT_MODEL`. Codex can still switch to any other
+    installed model in-session.
     """
 
-    chosen = cli_model or env_model()
-    if chosen:
-        return chosen
-    if required:
-        if not available:
-            raise RunError(
-                "A model is required but none are installed. "
-                "Pull one first, e.g. `ollama pull qwen2.5-coder:7b`."
-            )
-        return available[0]
-    return None
+    return cli_model or env_model() or (available[0] if available else DEFAULT_MODEL)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="Launch Codex with access to all local Ollama models.",
+        description="Launch the OpenAI Codex CLI against local Ollama models.",
     )
     parser.add_argument(
         "-m",
         "--model",
         help=f"Default model (also reads ${ENV_MODEL}). Codex can still switch "
-        "between all installed models in-session.",
+        "between installed models in-session with /model.",
     )
     parser.add_argument(
         "--host",
@@ -296,18 +231,6 @@ def build_parser() -> argparse.ArgumentParser:
         dest="autostart",
         action="store_false",
         help="Do not auto-start `ollama serve` if it is not already running.",
-    )
-    parser.add_argument(
-        "--config-only",
-        action="store_true",
-        help="Configure Codex for Ollama without launching it (ollama launch "
-        "codex --config).",
-    )
-    parser.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Run non-interactively (passes -y; requires a model).",
     )
     parser.add_argument(
         "--dry-run",
@@ -331,15 +254,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 2
 
-    launching = not args.config_only
     # Locate Codex. `npm install -g @openai/codex` often lands the binary in a
     # directory that is not on PATH (common on Ubuntu), so a "successful" install
     # can still leave `codex` unreachable. Look in npm's global bin too, and if we
-    # find it there, remember the dir to prepend to the launched process's PATH so
-    # both the `ollama launch codex` and `codex --oss` paths can see it.
-    codex_dir = None if (args.config_only or args.dry_run) else find_codex_dir()
-    codex_available = command_exists("codex") or codex_dir is not None
-    if launching and not args.dry_run and not codex_available:
+    # find it there, remember the dir to prepend to the launched process's PATH.
+    codex_dir = None if args.dry_run else find_codex_dir()
+    if not args.dry_run and not (command_exists("codex") or codex_dir):
         print(
             "error: Codex CLI not found. `python install.py` may have installed it "
             "into a directory that is not on your PATH. Install it with "
@@ -355,19 +275,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
 
-    # Prefer the first-party `ollama launch codex` integration (it exposes every
-    # local model to Codex). Older Ollama builds lack it, so we fall back to
-    # launching `codex --oss` directly rather than refusing to start.
-    supports_launch = ollama_supports_launch()
-    if args.config_only and not supports_launch:
-        print(
-            "error: --config-only needs `ollama launch codex`, which this Ollama "
-            "version does not support. Update Ollama (see "
-            "https://ollama.com/download) and try again.",
-            file=sys.stderr,
-        )
-        return 2
-
     # Make sure the server is up (skipped on --dry-run to avoid side effects).
     if not args.dry_run:
         try:
@@ -378,7 +285,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     models = list_ollama_models(host)
     if models:
-        print(f"Codex will have access to {len(models)} local model(s):")
+        print(f"Codex can use {len(models)} local model(s):")
         for name in models:
             print(f"  - {name}")
     else:
@@ -388,24 +295,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
 
-    if supports_launch:
-        try:
-            model = resolve_model(args.model, models, required=args.yes)
-        except RunError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        cmd = build_launch_command(
-            model, extra, config_only=args.config_only, yes=args.yes
-        )
-    else:
-        print(
-            "note: this Ollama build has no `ollama launch codex` integration; "
-            "falling back to `codex --oss`.",
-            file=sys.stderr,
-        )
-        # codex --oss always needs a concrete default model.
-        model = args.model or env_model() or (models[0] if models else DEFAULT_MODEL)
-        cmd = build_codex_oss_command(model, extra)
+    model = resolve_model(args.model, models)
+    cmd = build_codex_command(model, extra)
 
     print(f"$ {' '.join(cmd)}")
     if args.dry_run:
