@@ -118,8 +118,8 @@ def test_build_model_catalog_neutralizes_incompatible_capabilities(
     run_mod: ModuleType,
 ) -> None:
     # A cloud template (like Codex's real bundled entries) advertises web search,
-    # image input, verbosity, and freeform apply_patch -- all of which make Codex
-    # emit request items the Ollama endpoint rejects ("unknown input item type").
+    # image input, and verbosity -- which make Codex emit request items the Ollama
+    # endpoint rejects ("unknown input item type"). We disable those.
     bundled = {
         "models": [
             {
@@ -138,7 +138,10 @@ def test_build_model_catalog_neutralizes_incompatible_capabilities(
     assert added["supports_search_tool"] is False
     assert added["support_verbosity"] is False
     assert added["input_modalities"] == ["text"]
-    assert added["apply_patch_tool_type"] == "function"
+    # Enum-valued fields are left untouched: substituting a variant the installed
+    # Codex doesn't accept (e.g. apply_patch_tool_type "function") would make it
+    # reject the whole catalog. Keep the template's own valid value.
+    assert added["apply_patch_tool_type"] == "freeform"
     # Fields we don't override are carried through untouched.
     assert added["supports_parallel_tool_calls"] is True
     # The original bundled template is not mutated by the clone.
@@ -167,6 +170,23 @@ def test_build_model_catalog_prefers_oss_template(run_mod: ModuleType) -> None:
     assert added["flavor"] == "local"
 
 
+def test_catalog_accepted_true_false_and_missing(run_mod: ModuleType) -> None:
+    def ok(cmd, capture_output, text, env=None):
+        assert cmd[:3] == ["codex", "debug", "models"]
+        assert cmd[3] == "-c" and cmd[4].startswith("model_catalog_json=")
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    def bad(cmd, capture_output, text, env=None):
+        return SimpleNamespace(returncode=1, stdout="", stderr="unknown variant")
+
+    def missing(cmd, capture_output, text, env=None):
+        raise OSError("no codex")
+
+    assert run_mod.catalog_accepted("/c/cat.json", runner=ok) is True
+    assert run_mod.catalog_accepted("/c/cat.json", runner=bad) is False
+    assert run_mod.catalog_accepted("/c/cat.json", runner=missing) is False
+
+
 def test_prepare_model_catalog_writes_and_returns_path(
     run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -176,10 +196,29 @@ def test_prepare_model_catalog_writes_and_returns_path(
         "bundled_model_catalog",
         lambda **kw: {"models": [{"slug": "gpt-oss:20b", "visibility": "list"}]},
     )
+    monkeypatch.setattr(run_mod, "catalog_accepted", lambda *a, **k: True)
     path = run_mod.prepare_model_catalog(["qwen:7b"])
     assert path == str(tmp_path / "col-ollama-catalog.json")
     written = json.loads((tmp_path / "col-ollama-catalog.json").read_text())
     assert [e["slug"] for e in written["models"]] == ["gpt-oss:20b", "qwen:7b"]
+
+
+def test_prepare_model_catalog_none_when_codex_rejects(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        run_mod,
+        "bundled_model_catalog",
+        lambda **kw: {"models": [{"slug": "gpt-oss:20b", "visibility": "list"}]},
+    )
+    # Codex refuses the generated catalog (simulating a schema mismatch).
+    monkeypatch.setattr(run_mod, "catalog_accepted", lambda *a, **k: False)
+    assert run_mod.prepare_model_catalog(["qwen:7b"]) is None
+    assert "rejected the generated model catalog" in capsys.readouterr().err
 
 
 def test_prepare_model_catalog_none_when_bundled_unavailable(

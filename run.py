@@ -288,16 +288,18 @@ def bundled_model_catalog(runner=None, env=None) -> Optional[Dict]:
 # a local Ollama model. Left as-is, a cloud template advertises features whose
 # Responses-API request items the Ollama endpoint rejects with "unknown input
 # item type" -- notably ``web_search_call`` from ``supports_search_tool``. We
-# force a locally-compatible profile: no web search, text-only input, plain
-# function-call ``apply_patch`` (the "freeform" variant is a Responses-only
-# custom tool), and no verbosity control. Only keys already present in the
-# template are overwritten, so the entry stays valid against the installed
-# Codex's schema (adding unknown keys would make Codex discard the whole catalog).
+# force a locally-compatible profile: no web search, text-only input, no
+# verbosity control. Only keys already present in the template are overwritten,
+# and only with values that are safe across Codex versions: booleans, or a subset
+# of a value already in the template (``input_modalities``). We deliberately do
+# NOT rewrite enum-valued fields such as ``apply_patch_tool_type`` -- substituting
+# a variant the installed Codex doesn't accept makes it reject the whole catalog
+# (e.g. ``unknown variant `function`, expected `freeform```). :func:`catalog_accepted`
+# validates the result before we rely on it.
 _LOCAL_MODEL_OVERRIDES: Dict[str, object] = {
     "supports_search_tool": False,
     "support_verbosity": False,
     "input_modalities": ["text"],
-    "apply_patch_tool_type": "function",
 }
 
 
@@ -363,12 +365,37 @@ def write_model_catalog(catalog: Dict, path: pathlib.Path) -> None:
     path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
 
 
+def catalog_accepted(path: str, *, runner=None, env=None) -> bool:
+    """Return True if Codex loads the catalog at ``path`` without error.
+
+    Codex's catalog schema is strict and drifts across versions; a value it does
+    not accept makes it reject the *entire* catalog at startup (e.g. ``unknown
+    variant `function```). We verify with ``codex debug models -c
+    model_catalog_json="<path>"`` -- which loads config the same way a launch does
+    -- and treat a non-zero exit (or the command being unavailable) as rejection,
+    so the caller can fall back to launching without the catalog rather than
+    handing Codex a config that makes it refuse to start. Injectable for tests.
+    """
+
+    runner = runner or subprocess.run
+    try:
+        result = runner(
+            ["codex", "debug", "models", "-c", f'model_catalog_json="{path}"'],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except OSError:
+        return False
+    return getattr(result, "returncode", 0) == 0
+
+
 def prepare_model_catalog(models: Sequence[str], *, env=None) -> Optional[str]:
     """Generate the model catalog and return its path, or ``None`` on failure.
 
     Best-effort: prints a warning and returns ``None`` if Codex's bundled catalog
-    cannot be read or the file cannot be written, so the caller can still launch
-    plain ``codex --oss`` instead of failing.
+    cannot be read, the file cannot be written, or Codex rejects the result, so
+    the caller can still launch plain ``codex --oss`` instead of failing.
     """
 
     bundled = bundled_model_catalog(env=env)
@@ -387,6 +414,14 @@ def prepare_model_catalog(models: Sequence[str], *, env=None) -> Optional[str]:
     except OSError as exc:
         print(
             f"warning: could not write model catalog to {path}: {exc}", file=sys.stderr
+        )
+        return None
+    if not catalog_accepted(str(path), env=env):
+        print(
+            f"warning: Codex rejected the generated model catalog ({path}); "
+            "launching without it, so your local models won't appear in /model. "
+            "This usually means Codex's catalog schema changed -- please report it.",
+            file=sys.stderr,
         )
         return None
     print(f"Exposing {len(models)} local model(s) to Codex's /model via {path}.")
