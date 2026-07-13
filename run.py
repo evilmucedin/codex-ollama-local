@@ -19,8 +19,10 @@ in ``/model`` (it skips the remote refresh), so your local Ollama models never
 appear. To fix that we generate a *model catalog* -- Codex's own bundled catalog
 (read via ``codex debug models --bundled``, so it stays schema-correct across Codex
 versions) plus one cloned entry per local Ollama model -- and point Codex at it for
-the run via ``-c model_catalog_json="..."``. Pass ``--no-catalog`` to skip this and
-launch plain ``codex --oss``.
+the run via ``-c model_catalog_json="..."``. Cloned entries are given a
+locally-compatible capability profile (e.g. web search disabled) so Codex does not
+emit request items the Ollama endpoint rejects. Pass ``--no-catalog`` to skip this
+and launch plain ``codex --oss``.
 
 Uses only the Python standard library. Cross-platform: Ubuntu, macOS, Windows.
 
@@ -281,6 +283,24 @@ def bundled_model_catalog(runner=None, env=None) -> Optional[Dict]:
     return None
 
 
+# Capability flags that must be toned down when we retarget a bundled entry
+# (typically a cloud model -- Codex's bundled catalog ships no gpt-oss entry) to
+# a local Ollama model. Left as-is, a cloud template advertises features whose
+# Responses-API request items the Ollama endpoint rejects with "unknown input
+# item type" -- notably ``web_search_call`` from ``supports_search_tool``. We
+# force a locally-compatible profile: no web search, text-only input, plain
+# function-call ``apply_patch`` (the "freeform" variant is a Responses-only
+# custom tool), and no verbosity control. Only keys already present in the
+# template are overwritten, so the entry stays valid against the installed
+# Codex's schema (adding unknown keys would make Codex discard the whole catalog).
+_LOCAL_MODEL_OVERRIDES: Dict[str, object] = {
+    "supports_search_tool": False,
+    "support_verbosity": False,
+    "input_modalities": ["text"],
+    "apply_patch_tool_type": "function",
+}
+
+
 def _catalog_template(entries: Sequence[Dict]) -> Optional[Dict]:
     """Pick a bundled entry to clone for local models.
 
@@ -294,14 +314,32 @@ def _catalog_template(entries: Sequence[Dict]) -> Optional[Dict]:
     return entries[0] if entries and isinstance(entries[0], dict) else None
 
 
+def _localize_entry(entry: Dict, name: str) -> Dict:
+    """Retarget a cloned template entry to the local Ollama model ``name``.
+
+    Sets identity fields and forces a locally-compatible capability profile (see
+    :data:`_LOCAL_MODEL_OVERRIDES`), mutating and returning ``entry``.
+    """
+
+    entry["slug"] = name
+    entry["display_name"] = name
+    entry["description"] = f"Local model served by Ollama ({name})."
+    entry["visibility"] = "list"
+    for key, value in _LOCAL_MODEL_OVERRIDES.items():
+        if key in entry:
+            entry[key] = copy.deepcopy(value)
+    return entry
+
+
 def build_model_catalog(models: Sequence[str], bundled: Dict) -> Dict:
     """Return a catalog of Codex's bundled models plus the local Ollama models.
 
     Each local model missing from the bundled catalog gets a deep copy of a
-    template entry with its ``slug``/``display_name`` retargeted, so every
-    (schema-required) field is present and valid. The catalog *replaces* Codex's
-    model list, so we keep the bundled entries too -- cloud models stay available
-    alongside the local ones.
+    template entry, retargeted via :func:`_localize_entry` so every
+    (schema-required) field is present and valid *and* the capability profile
+    won't make Codex emit request items the Ollama endpoint rejects. The catalog
+    *replaces* Codex's model list, so we keep the bundled entries too -- cloud
+    models stay available alongside the local ones.
     """
 
     entries = [e for e in bundled.get("models", []) if isinstance(e, dict)]
@@ -312,11 +350,7 @@ def build_model_catalog(models: Sequence[str], bundled: Dict) -> Dict:
     for name in models:
         if name in slugs:
             continue
-        entry = copy.deepcopy(template)
-        entry["slug"] = name
-        entry["display_name"] = name
-        entry["description"] = f"Local model served by Ollama ({name})."
-        entry["visibility"] = "list"
+        entry = _localize_entry(copy.deepcopy(template), name)
         entries.append(entry)
         slugs.add(name)
     return {"models": entries}

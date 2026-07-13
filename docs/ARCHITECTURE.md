@@ -125,13 +125,24 @@ plain `codex --oss` shows none of your Ollama models in `/model`.
 `run.py` builds the override. It reads Codex's bundled catalog with `codex debug models
 --bundled` (native JSON), then — because the catalog schema is strict and enum-checked
 and drifts across Codex releases — *clones* a real bundled entry (preferring an "oss"
-one) for each installed Ollama model, retargeting only `slug`/`display_name`/
-`description`/`visibility`. That keeps every schema-required field valid for the
-installed Codex version without us hard-coding the schema. The override *replaces* the
-model list, so the bundled entries are carried through too (cloud models stay
-selectable alongside local ones). The result is written to
-`$CODEX_HOME/col-ollama-catalog.json` and passed for the single run via
-`-c model_catalog_json="…"`, leaving the user's `config.toml` untouched.
+one) for each installed Ollama model, retargeting `slug`/`display_name`/`description`/
+`visibility`. That keeps every schema-required field valid for the installed Codex
+version without us hard-coding the schema. The override *replaces* the model list, so
+the bundled entries are carried through too (cloud models stay selectable alongside
+local ones). The result is written to `$CODEX_HOME/col-ollama-catalog.json` and passed
+for the single run via `-c model_catalog_json="…"`, leaving the user's `config.toml`
+untouched.
+
+Codex's bundled catalog currently ships **only cloud models** (no `gpt-oss` entry), so
+the template we clone is typically a cloud entry that advertises capabilities — web
+search, image input, verbosity, freeform (`custom`-tool) `apply_patch` — whose
+Responses-API request items a local Ollama endpoint rejects with `unknown input item
+type` (see Codex issue #24612 for the `web_search_call` case). So when retargeting a
+clone to a local model, `run.py` also forces a locally-compatible capability profile
+(`supports_search_tool=false`, `input_modalities=["text"]`, `support_verbosity=false`,
+`apply_patch_tool_type="function"`). To stay schema-valid it only overwrites keys that
+already exist in the template — introducing an unknown key would make Codex discard the
+entire catalog.
 
 This is best-effort and never fatal: if `codex debug models` is unavailable (older
 Codex) or the file can't be written, `run.py` warns and launches plain `codex --oss`.
