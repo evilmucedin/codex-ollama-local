@@ -5,7 +5,7 @@ All subprocess calls are mocked, so nothing is actually installed.
 
 from __future__ import annotations
 
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -157,3 +157,64 @@ def test_main_reports_unsupported_os(
 ) -> None:
     monkeypatch.setattr(install_mod.platform, "system", lambda: "Plan9")
     assert install_mod.main([]) == 2
+
+
+# -- codex PATH verification -----------------------------------------------
+def test_npm_global_bin_dir_posix(
+    install_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(install_mod, "command_exists", lambda name: True)
+    monkeypatch.setattr(install_mod.os, "name", "posix")
+    monkeypatch.setattr(
+        install_mod.subprocess,
+        "run",
+        lambda cmd, capture_output, text: SimpleNamespace(stdout="/usr/local\n"),
+    )
+    assert install_mod.npm_global_bin_dir() == "/usr/local/bin"
+
+
+def test_warn_if_codex_unreachable_warns(
+    install_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(install_mod, "command_exists", lambda name: False)
+    monkeypatch.setattr(install_mod, "npm_global_bin_dir", lambda: "/x/bin")
+    install_mod.warn_if_codex_unreachable(dry_run=False)
+    err = capsys.readouterr().err
+    assert "not on your PATH" in err
+    assert "/x/bin" in err
+
+
+def test_warn_if_codex_unreachable_noop_when_present(
+    install_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(install_mod, "command_exists", lambda name: True)
+    install_mod.warn_if_codex_unreachable(dry_run=False)
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_if_codex_unreachable_noop_on_dry_run(
+    install_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(install_mod, "command_exists", lambda name: False)
+    install_mod.warn_if_codex_unreachable(dry_run=True)
+    assert capsys.readouterr().err == ""
+
+
+def test_main_warns_when_codex_off_path(
+    install_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(install_mod.platform, "system", lambda: "Linux")
+    # npm present so Codex "installs", but codex never lands on PATH.
+    monkeypatch.setattr(install_mod, "command_exists", lambda name: name == "npm")
+    monkeypatch.setattr(install_mod, "run", lambda cmd, **kw: 0)
+    monkeypatch.setattr(install_mod, "npm_global_bin_dir", lambda: "/x/bin")
+    assert install_mod.main(["--only", "codex"]) == 0
+    assert "not on your PATH" in capsys.readouterr().err

@@ -122,6 +122,49 @@ def test_supports_launch_true_false(run_mod: ModuleType) -> None:
     assert run_mod.ollama_supports_launch(runner=missing) is False
 
 
+# -- codex discovery -------------------------------------------------------
+def test_npm_global_bin_dir_posix(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: True)
+    monkeypatch.setattr(run_mod.os, "name", "posix")
+
+    def runner(cmd, capture_output, text):
+        assert cmd == ["npm", "prefix", "-g"]
+        return SimpleNamespace(stdout="/home/u/.npm-global\n", stderr="")
+
+    assert run_mod.npm_global_bin_dir(runner=runner) == "/home/u/.npm-global/bin"
+
+
+def test_npm_global_bin_dir_none_without_npm(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: False)
+    assert run_mod.npm_global_bin_dir(runner=lambda *a, **k: None) is None
+
+
+def test_find_codex_dir_returns_none_when_on_path(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: True)
+    assert run_mod.find_codex_dir(bin_dir="/whatever") is None
+
+
+def test_find_codex_dir_finds_off_path_binary(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: False)
+    (tmp_path / "codex").write_text("#!/bin/sh\n")
+    assert run_mod.find_codex_dir(bin_dir=str(tmp_path)) == str(tmp_path)
+
+
+def test_find_codex_dir_none_when_absent(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: False)
+    assert run_mod.find_codex_dir(bin_dir=str(tmp_path)) is None
+
+
 def test_is_ollama_running_true_and_false(run_mod: ModuleType) -> None:
     class _Resp:
         def __enter__(self):
@@ -191,8 +234,35 @@ def test_main_errors_when_codex_missing(
 ) -> None:
     monkeypatch.setattr(run_mod, "command_exists", lambda name: name != "codex")
     monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: True)
+    # Not discoverable in npm's global bin either.
+    monkeypatch.setattr(run_mod, "find_codex_dir", lambda *a, **k: None)
     assert run_mod.main([]) == 2
     assert "Codex" in capsys.readouterr().err
+
+
+def test_main_adds_npm_bin_to_path_when_codex_off_path(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.delenv("CODEX_OLLAMA_MODEL", raising=False)
+    # codex is NOT on PATH, but discoverable in npm's global bin.
+    monkeypatch.setattr(run_mod, "command_exists", lambda name: name == "ollama")
+    monkeypatch.setattr(run_mod, "ollama_supports_launch", lambda: True)
+    monkeypatch.setattr(run_mod, "ensure_ollama_running", lambda host, **kw: None)
+    monkeypatch.setattr(run_mod, "list_ollama_models", lambda host: ["a:1"])
+    monkeypatch.setattr(run_mod, "find_codex_dir", lambda *a, **k: "/opt/npm/bin")
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd, env=env)
+        or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main([]) == 0
+    # The discovered dir is prepended to PATH for the launched process.
+    assert captured["env"]["PATH"].split(run_mod.os.pathsep)[0] == "/opt/npm/bin"
+    assert "not on PATH" in capsys.readouterr().err
 
 
 def test_main_falls_back_to_codex_oss_without_launch_support(

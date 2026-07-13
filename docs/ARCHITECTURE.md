@@ -74,7 +74,11 @@ standard library** (so `install.py` runs on a clean machine before anything is
 installed):
 - `install.py` — installs the **Codex CLI** (`npm i -g @openai/codex`) and the
   **Ollama** server, choosing the right command per OS (Ubuntu convenience script /
-  Homebrew / winget). Idempotent: each tool is skipped if already on `PATH`.
+  Homebrew / winget). Idempotent: each tool is skipped if already on `PATH`. After
+  installing Codex it verifies `codex` is reachable; `npm install -g` often writes to
+  a directory that is not on `PATH`, so when that happens it prints npm's global bin
+  directory and the `export PATH=...` line to fix it instead of reporting a hollow
+  success.
 - `run.py` — ensures Ollama is reachable (auto-starting `ollama serve` if needed),
   enumerates the installed models, and hands off to **`ollama launch codex`**,
   forwarding extra args to Codex. This is how the project realizes "Codex, but
@@ -98,7 +102,10 @@ readiness, model enumeration/reporting, default-model resolution, a safe `--dry-
 and clean error messages when a prerequisite is missing.
 
 `run.py` flow:
-1. Verify `ollama` (and, when launching, `codex`) are installed — else point at
+1. Verify `ollama` is installed. Locate `codex`: check `PATH`, and — because
+   `npm install -g` frequently installs outside `PATH` — also npm's global bin
+   directory (`npm prefix -g`). If found only there, that directory is prepended to
+   the launched process's `PATH`. If found nowhere (and launching), point at
    `install.py`.
 2. Detect whether the Ollama build supports `ollama launch codex`.
 3. Ensure the server is running (auto-start unless `--no-serve`; skipped on `--dry-run`).
@@ -106,7 +113,8 @@ and clean error messages when a prerequisite is missing.
 5. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed when a
    model is required, e.g. headless `-y`).
 6. Build and run `ollama launch codex [--model M] [-y] [--config] [-- <codex args>]`
-   with `OLLAMA_HOST` set; `--dry-run` prints the command instead.
+   with `OLLAMA_HOST` set (and the discovered Codex dir on `PATH`, so both Ollama's
+   own lookup and Codex itself can find the binary); `--dry-run` prints the command.
 
 If the `ollama launch codex` integration is absent (older Ollama), step 6 falls back
 to `codex --oss -m <model>` (default model `--model` > `$CODEX_OLLAMA_MODEL` > first
