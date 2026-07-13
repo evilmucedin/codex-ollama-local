@@ -39,12 +39,24 @@ Codex's default model; you can still switch between installed models in-session 
 
 ```bash
 python run.py                 # launch Codex; all local models selectable in /model
+python run.py --gui           # launch the Codex desktop app instead of the CLI
 python run.py -m gpt-oss:20b  # set the default model (still switchable in-session)
 python run.py --no-serve      # do not auto-start `ollama serve`
 python run.py --no-catalog    # don't customize Codex's /model list (plain codex --oss)
 python run.py --dry-run       # show what would run, without changing anything
 python run.py -- --sandbox workspace-write   # forward flags to Codex
 ```
+
+### Desktop app (`--gui`)
+
+`python run.py --gui` launches the **Codex desktop app** (`codex app`) instead of the
+terminal CLI, after making sure your Ollama server is up. Codex Desktop is a separate
+surface: it has its own in-app model picker and takes none of the CLI's
+`--oss`/`-m`/`--no-catalog` flags, so those are ignored in `--gui` mode (the generated
+`/model` catalog applies to the CLI only). Extra args after `--` are forwarded to
+`codex app` (e.g. a workspace path or `--download-url`). Codex ships the desktop app
+for **macOS and Windows only**; on other platforms `run.py` warns and still attempts
+the launch so Codex itself reports whether it is available.
 
 ### All local models show up in Codex's `/model`
 
