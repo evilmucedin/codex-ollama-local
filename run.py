@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -58,6 +59,52 @@ class RunError(RuntimeError):
 
 def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def npm_global_bin_dir(runner=None) -> Optional[str]:
+    """Best-effort path to the directory npm installs global binaries into.
+
+    ``npm install -g`` frequently lands binaries in a directory that is not on
+    ``PATH`` (a common Ubuntu setup), which is why a "successful" install can
+    still leave ``codex`` unreachable. We query ``npm prefix -g`` to recover that
+    location. Returns ``None`` on any failure. ``runner`` is injectable for tests.
+    """
+
+    runner = runner or subprocess.run
+    if not command_exists("npm"):
+        return None
+    try:
+        result = runner(["npm", "prefix", "-g"], capture_output=True, text=True)
+    except OSError:
+        return None
+    prefix = (getattr(result, "stdout", "") or "").strip()
+    if not prefix:
+        return None
+    # POSIX npm puts executables in <prefix>/bin; on Windows they sit in <prefix>.
+    base = pathlib.Path(prefix)
+    return str(base if os.name == "nt" else base / "bin")
+
+
+def find_codex_dir(bin_dir=None) -> Optional[str]:
+    """Return a directory to add to ``PATH`` so ``codex`` becomes reachable.
+
+    ``None`` means nothing needs to change: either ``codex`` is already on ``PATH``
+    or it could not be located. When ``codex`` is missing from ``PATH`` but present
+    in npm's global bin directory, that directory is returned so the caller can
+    prepend it to the launched process's ``PATH``. ``bin_dir`` is injectable for
+    tests; by default it is discovered via :func:`npm_global_bin_dir`.
+    """
+
+    if command_exists("codex"):
+        return None
+    bin_dir = bin_dir if bin_dir is not None else npm_global_bin_dir()
+    if not bin_dir:
+        return None
+    directory = pathlib.Path(bin_dir)
+    for name in ("codex", "codex.cmd", "codex.exe"):
+        if (directory / name).exists():
+            return str(directory)
+    return None
 
 
 def default_host() -> str:
@@ -285,12 +332,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     launching = not args.config_only
-    if launching and not args.dry_run and not command_exists("codex"):
+    # Locate Codex. `npm install -g @openai/codex` often lands the binary in a
+    # directory that is not on PATH (common on Ubuntu), so a "successful" install
+    # can still leave `codex` unreachable. Look in npm's global bin too, and if we
+    # find it there, remember the dir to prepend to the launched process's PATH so
+    # both the `ollama launch codex` and `codex --oss` paths can see it.
+    codex_dir = None if (args.config_only or args.dry_run) else find_codex_dir()
+    codex_available = command_exists("codex") or codex_dir is not None
+    if launching and not args.dry_run and not codex_available:
         print(
-            "error: Codex CLI is not installed. Run `python install.py` first.",
+            "error: Codex CLI not found. `python install.py` may have installed it "
+            "into a directory that is not on your PATH. Install it with "
+            "`npm install -g @openai/codex`, then ensure npm's global bin directory "
+            "(see `npm prefix -g`) is on PATH.",
             file=sys.stderr,
         )
         return 2
+    if codex_dir:
+        print(
+            f"note: found Codex in {codex_dir} (not on PATH); "
+            "adding it to PATH for this run.",
+            file=sys.stderr,
+        )
 
     # Prefer the first-party `ollama launch codex` integration (it exposes every
     # local model to Codex). Older Ollama builds lack it, so we fall back to
@@ -350,6 +413,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     env = dict(os.environ)
     env[ENV_HOST] = host
+    if codex_dir:
+        env["PATH"] = codex_dir + os.pathsep + env.get("PATH", "")
     return subprocess.run(cmd, env=env).returncode
 
 

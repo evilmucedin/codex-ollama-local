@@ -23,6 +23,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
+import pathlib
 import platform
 import shutil
 import subprocess
@@ -53,6 +55,50 @@ def command_exists(name: str) -> bool:
     """True if ``name`` is found on ``PATH``."""
 
     return shutil.which(name) is not None
+
+
+def npm_global_bin_dir() -> Optional[str]:
+    """Best-effort path to the directory ``npm install -g`` writes binaries into.
+
+    Returns ``None`` if it cannot be determined. Used only to make the post-install
+    PATH warning actionable.
+    """
+
+    if not command_exists("npm"):
+        return None
+    try:
+        result = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True)
+    except OSError:
+        return None
+    prefix = (result.stdout or "").strip()
+    if not prefix:
+        return None
+    base = pathlib.Path(prefix)
+    # POSIX npm installs into <prefix>/bin; on Windows binaries sit in <prefix>.
+    return str(base if os.name == "nt" else base / "bin")
+
+
+def warn_if_codex_unreachable(*, dry_run: bool = False) -> None:
+    """Warn when Codex was installed but ``codex`` is not on ``PATH``.
+
+    ``npm install -g`` commonly writes into a directory that is not on ``PATH``
+    (typical on Ubuntu), so the install can succeed while ``codex`` stays
+    unreachable. Rather than let that pass silently, point at npm's global bin
+    directory and how to fix it. No-op on ``--dry-run`` (nothing was installed).
+    """
+
+    if dry_run or command_exists("codex"):
+        return
+    bindir = npm_global_bin_dir()
+    location = f" It is likely in {bindir!r}." if bindir else ""
+    export_hint = f'\n  export PATH="{bindir}:$PATH"' if bindir else ""
+    print(
+        f"warning: Codex was installed but `codex` is not on your PATH.{location}\n"
+        "Add npm's global bin directory to your PATH (e.g. in ~/.bashrc):"
+        f"{export_hint}\n"
+        "`run.py` will also try to locate Codex there automatically.",
+        file=sys.stderr,
+    )
 
 
 def run(cmd: Command, *, dry_run: bool = False, shell: bool = False) -> int:
@@ -192,6 +238,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if "codex" in targets:
+        warn_if_codex_unreachable(dry_run=args.dry_run)
 
     print(
         "\nDone. Start the agent with `python run.py` "

@@ -26,7 +26,10 @@ python run.py
 ```
 
 `install.py` is idempotent (re-running is safe); use `--dry-run` to preview the
-commands or `--force` to reinstall.
+commands or `--force` to reinstall. Codex is installed with `npm install -g`, whose
+global bin directory is often not on `PATH` (common on Ubuntu); `install.py` detects
+that and prints the exact `export PATH=...` line to fix it, and `run.py` locates Codex
+there automatically so it still launches.
 
 `run.py` starts `ollama serve` automatically if it is not already running, lists the
 models Codex will have access to, and then hands off to **`ollama launch codex`** —
