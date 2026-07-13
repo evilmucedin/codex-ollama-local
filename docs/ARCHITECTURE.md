@@ -135,11 +135,13 @@ untouched.
 
 Codex's bundled catalog currently ships **only cloud models** (no `gpt-oss` entry), so
 the template we clone is typically a cloud entry that advertises capabilities — web
-search, image input, verbosity — whose Responses-API request items a local Ollama
-endpoint rejects with `unknown input item type` (see Codex issue #24612 for the
-`web_search_call` case). So when retargeting a clone to a local model, `run.py` also
-forces a locally-compatible capability profile (`supports_search_tool=false`,
-`input_modalities=["text"]`, `support_verbosity=false`).
+search, Responses Lite, image input, verbosity — whose Responses-API request items a
+local Ollama endpoint rejects with `unknown input item type`. Two have bitten us in
+practice: `supports_search_tool=true` makes Codex emit a `web_search_call` item (see
+Codex issue #24612), and `use_responses_lite=true` makes it prepend an
+`additional_tools` item on every turn. So when retargeting a clone to a local model,
+`run.py` forces a locally-compatible capability profile (`supports_search_tool=false`,
+`use_responses_lite=false`, `input_modalities=["text"]`, `support_verbosity=false`).
 
 Two rules keep the override schema-valid across Codex releases. First, `run.py` only
 overwrites keys that already exist in the template — introducing an unknown key would

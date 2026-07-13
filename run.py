@@ -287,18 +287,24 @@ def bundled_model_catalog(runner=None, env=None) -> Optional[Dict]:
 # (typically a cloud model -- Codex's bundled catalog ships no gpt-oss entry) to
 # a local Ollama model. Left as-is, a cloud template advertises features whose
 # Responses-API request items the Ollama endpoint rejects with "unknown input
-# item type" -- notably ``web_search_call`` from ``supports_search_tool``. We
-# force a locally-compatible profile: no web search, text-only input, no
-# verbosity control. Only keys already present in the template are overwritten,
-# and only with values that are safe across Codex versions: booleans, or a subset
-# of a value already in the template (``input_modalities``). We deliberately do
-# NOT rewrite enum-valued fields such as ``apply_patch_tool_type`` -- substituting
-# a variant the installed Codex doesn't accept makes it reject the whole catalog
-# (e.g. ``unknown variant `function`, expected `freeform```). :func:`catalog_accepted`
-# validates the result before we rely on it.
+# item type". Two such items have bitten us:
+#   * ``supports_search_tool=true`` makes Codex emit a ``web_search_call`` item.
+#   * ``use_responses_lite=true`` makes Codex prepend an ``additional_tools``
+#     item (the "Responses Lite" tool-passing shape) on every turn.
+# Ollama understands neither, so it 400s each query. We force a locally-compatible
+# profile: no web search, no Responses Lite, text-only input, no verbosity control.
+# Only keys already present in the template are overwritten, and only with values
+# that are safe across Codex versions: booleans, or a subset of a value already in
+# the template (``input_modalities``). We deliberately do NOT rewrite enum-valued
+# fields such as ``apply_patch_tool_type`` -- substituting a variant the installed
+# Codex doesn't accept makes it reject the whole catalog (e.g. ``unknown variant
+# `function`, expected `freeform```). :func:`catalog_accepted` validates that the
+# file still parses, but note it cannot catch request-time item rejections like the
+# above -- those are why we neutralize the capabilities here in the first place.
 _LOCAL_MODEL_OVERRIDES: Dict[str, object] = {
     "supports_search_tool": False,
     "support_verbosity": False,
+    "use_responses_lite": False,
     "input_modalities": ["text"],
 }
 
