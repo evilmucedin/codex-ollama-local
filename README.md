@@ -17,17 +17,33 @@ only the Python standard library, so you can run them on a clean machine:
 # 1. Install the Codex CLI and the Ollama server (skips whatever is already present)
 python install.py
 
-# 2. Pull a local model
+# 2. Pull one or more local models
+ollama pull qwen2.5-coder:7b
 ollama pull gpt-oss:20b
 
-# 3. Launch the Codex agent against your local Ollama
+# 3. Launch Codex with access to ALL your local models
 python run.py
 ```
 
 `install.py` is idempotent (re-running is safe); use `--dry-run` to preview the
-commands or `--force` to reinstall. `run.py` starts `ollama serve` automatically if
-it is not already running, then launches `codex --oss`; pass `-m <model>` to pick a
-model and forward extra flags to Codex after `--` (e.g. `python run.py -- --help`).
+commands or `--force` to reinstall.
+
+`run.py` starts `ollama serve` automatically if it is not already running, lists the
+models Codex will have access to, and then hands off to **`ollama launch codex`** —
+Ollama's built-in Codex integration, which refreshes Codex's model catalog so **every
+model installed in your local Ollama is selectable inside Codex** (switch with `/model`
+during a session). Useful flags:
+
+```bash
+python run.py                 # launch Codex; all local models available
+python run.py -m gpt-oss:20b  # set the default model (still switchable in-session)
+python run.py --dry-run       # show what would run, without changing anything
+python run.py --config-only   # configure Codex for Ollama without launching it
+python run.py -- --sandbox workspace-write   # forward flags to Codex
+```
+
+> Requires an Ollama version that provides `ollama launch codex` (installed by
+> `install.py`). `run.py` checks for it and tells you to update Ollama if it is missing.
 
 ## Requirements
 

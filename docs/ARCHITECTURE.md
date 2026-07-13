@@ -76,11 +76,37 @@ installed):
   **Ollama** server, choosing the right command per OS (Ubuntu convenience script /
   Homebrew / winget). Idempotent: each tool is skipped if already on `PATH`.
 - `run.py` — ensures Ollama is reachable (auto-starting `ollama serve` if needed),
-  then launches `codex --oss -m <model>`, forwarding extra args to Codex. This is
-  how the project realizes "Codex, but against local models".
+  enumerates the installed models, and hands off to **`ollama launch codex`**,
+  forwarding extra args to Codex. This is how the project realizes "Codex, but
+  against local models".
 
 Both keep side effects in small injectable functions; tests mock every subprocess
 and HTTP call.
+
+#### Why `run.py` delegates to `ollama launch codex`
+
+The requirement is that Codex can use **every** model in the local Ollama, not just
+one. Codex discovers non-default models through a *model catalog* (`model_catalog_json`
+in `~/.codex`), whose JSON schema is strict, largely undocumented, and changes across
+Codex releases (wrong enum values cause hard parse failures). Rather than generate and
+maintain that file ourselves, `run.py` delegates to Ollama's first-party
+`ollama launch codex` integration, which refreshes the catalog from `/api/tags` and
+writes a Codex profile. Ollama keeps this integration current with both tools, so the
+"all models available" behavior stays correct without us tracking Codex's internal
+schema. `run.py`'s own responsibilities are the surrounding orchestration: server
+readiness, model enumeration/reporting, default-model resolution, a safe `--dry-run`,
+and clean error messages when a prerequisite is missing.
+
+`run.py` flow:
+1. Verify `ollama` (and, when launching, `codex`) are installed — else point at
+   `install.py`.
+2. Verify the Ollama build supports `ollama launch codex` — else advise updating.
+3. Ensure the server is running (auto-start unless `--no-serve`; skipped on `--dry-run`).
+4. List local models via `GET /api/tags` and report them.
+5. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed when a
+   model is required, e.g. headless `-y`).
+6. Build and run `ollama launch codex [--model M] [-y] [--config] [-- <codex args>]`
+   with `OLLAMA_HOST` set; `--dry-run` prints the command instead.
 
 ## Data flow: `col chat "..."`
 
