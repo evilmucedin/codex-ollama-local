@@ -30,6 +30,128 @@ def test_build_codex_command_minimal(run_mod: ModuleType) -> None:
     assert run_mod.build_codex_command("m:1", []) == ["codex", "--oss", "-m", "m:1"]
 
 
+def test_build_codex_command_with_catalog(run_mod: ModuleType) -> None:
+    cmd = run_mod.build_codex_command(
+        "m:1", ["--sandbox", "read-only"], catalog_path="/c/cat.json"
+    )
+    assert cmd == [
+        "codex",
+        "--oss",
+        "-m",
+        "m:1",
+        "-c",
+        'model_catalog_json="/c/cat.json"',
+        "--sandbox",
+        "read-only",
+    ]
+
+
+# -- model catalog ---------------------------------------------------------
+def test_catalog_path_uses_codex_home(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    assert run_mod.catalog_path() == tmp_path / "col-ollama-catalog.json"
+
+
+def test_bundled_model_catalog_parses_dict(run_mod: ModuleType) -> None:
+    def runner(cmd, capture_output, text, env=None):
+        assert cmd == ["codex", "debug", "models", "--bundled"]
+        return SimpleNamespace(
+            returncode=0, stdout='{"models": [{"slug": "gpt-5"}]}', stderr=""
+        )
+
+    assert run_mod.bundled_model_catalog(runner=runner) == {
+        "models": [{"slug": "gpt-5"}]
+    }
+
+
+def test_bundled_model_catalog_wraps_bare_list(run_mod: ModuleType) -> None:
+    def runner(cmd, capture_output, text, env=None):
+        return SimpleNamespace(returncode=0, stdout='[{"slug": "gpt-5"}]', stderr="")
+
+    assert run_mod.bundled_model_catalog(runner=runner) == {
+        "models": [{"slug": "gpt-5"}]
+    }
+
+
+def test_bundled_model_catalog_none_on_failure(run_mod: ModuleType) -> None:
+    def missing(cmd, capture_output, text, env=None):
+        raise OSError("no codex")
+
+    def nonzero(cmd, capture_output, text, env=None):
+        return SimpleNamespace(returncode=1, stdout="{}", stderr="boom")
+
+    def garbage(cmd, capture_output, text, env=None):
+        return SimpleNamespace(returncode=0, stdout="not json", stderr="")
+
+    assert run_mod.bundled_model_catalog(runner=missing) is None
+    assert run_mod.bundled_model_catalog(runner=nonzero) is None
+    assert run_mod.bundled_model_catalog(runner=garbage) is None
+
+
+def test_build_model_catalog_clones_and_keeps_bundled(run_mod: ModuleType) -> None:
+    bundled = {
+        "models": [
+            {"slug": "gpt-5", "display_name": "GPT-5", "visibility": "list"},
+            {
+                "slug": "gpt-oss:20b",
+                "display_name": "gpt-oss:20b",
+                "visibility": "list",
+                "shell_type": "shell_command",
+            },
+        ]
+    }
+    catalog = run_mod.build_model_catalog(["qwen:7b", "gpt-oss:20b"], bundled)
+    slugs = [e["slug"] for e in catalog["models"]]
+    # Bundled entries kept; the already-present gpt-oss:20b is not duplicated;
+    # qwen:7b is added by cloning the oss template (so shell_type is carried over).
+    assert slugs == ["gpt-5", "gpt-oss:20b", "qwen:7b"]
+    added = catalog["models"][-1]
+    assert added["display_name"] == "qwen:7b"
+    assert added["visibility"] == "list"
+    assert added["shell_type"] == "shell_command"
+    assert "Ollama" in added["description"]
+
+
+def test_build_model_catalog_prefers_oss_template(run_mod: ModuleType) -> None:
+    bundled = {
+        "models": [
+            {"slug": "gpt-5", "flavor": "cloud"},
+            {"slug": "gpt-oss:120b", "flavor": "local"},
+        ]
+    }
+    catalog = run_mod.build_model_catalog(["mymodel:1"], bundled)
+    added = catalog["models"][-1]
+    # Cloned from the oss entry, not the first (cloud) entry.
+    assert added["flavor"] == "local"
+
+
+def test_prepare_model_catalog_writes_and_returns_path(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        run_mod,
+        "bundled_model_catalog",
+        lambda **kw: {"models": [{"slug": "gpt-oss:20b", "visibility": "list"}]},
+    )
+    path = run_mod.prepare_model_catalog(["qwen:7b"])
+    assert path == str(tmp_path / "col-ollama-catalog.json")
+    written = json.loads((tmp_path / "col-ollama-catalog.json").read_text())
+    assert [e["slug"] for e in written["models"]] == ["gpt-oss:20b", "qwen:7b"]
+
+
+def test_prepare_model_catalog_none_when_bundled_unavailable(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(run_mod, "bundled_model_catalog", lambda **kw: None)
+    assert run_mod.prepare_model_catalog(["qwen:7b"]) is None
+    assert "built-in models" in capsys.readouterr().err
+
+
 # -- model resolution ------------------------------------------------------
 def test_resolve_model_prefers_cli(
     run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -175,6 +297,8 @@ def _patch_common(run_mod, monkeypatch, *, models=("m:1",)):
     monkeypatch.setattr(run_mod, "command_exists", lambda name: True)
     monkeypatch.setattr(run_mod, "ensure_ollama_running", lambda host, **kw: None)
     monkeypatch.setattr(run_mod, "list_ollama_models", lambda host: list(models))
+    # Default: no catalog customization (dedicated tests cover it explicitly).
+    monkeypatch.setattr(run_mod, "prepare_model_catalog", lambda models, **kw: None)
 
 
 def test_main_errors_when_ollama_missing(
@@ -271,6 +395,7 @@ def test_main_adds_npm_bin_to_path_when_codex_off_path(
     monkeypatch.setattr(run_mod, "ensure_ollama_running", lambda host, **kw: None)
     monkeypatch.setattr(run_mod, "list_ollama_models", lambda host: ["a:1"])
     monkeypatch.setattr(run_mod, "find_codex_dir", lambda *a, **k: "/opt/npm/bin")
+    monkeypatch.setattr(run_mod, "prepare_model_catalog", lambda *a, **k: None)
     captured: dict = {}
     monkeypatch.setattr(
         run_mod.subprocess,
@@ -284,17 +409,91 @@ def test_main_adds_npm_bin_to_path_when_codex_off_path(
     assert "not on PATH" in capsys.readouterr().err
 
 
-def test_main_dry_run_does_not_launch(
+def test_main_injects_catalog(
     run_mod: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
+    monkeypatch.delenv("CODEX_OLLAMA_MODEL", raising=False)
+    _patch_common(run_mod, monkeypatch, models=("a:1", "b:2"))
+    monkeypatch.setattr(
+        run_mod, "prepare_model_catalog", lambda models, **kw: "/home/.codex/cat.json"
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd) or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main([]) == 0
+    assert captured["cmd"] == [
+        "codex",
+        "--oss",
+        "-m",
+        "a:1",
+        "-c",
+        'model_catalog_json="/home/.codex/cat.json"',
+    ]
+
+
+def test_main_no_catalog_flag_skips_generation(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=("a:1",))
+
+    def must_not_run(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("prepare_model_catalog must not run with --no-catalog")
+
+    monkeypatch.setattr(run_mod, "prepare_model_catalog", must_not_run)
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd) or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main(["--no-catalog"]) == 0
+    assert captured["cmd"] == ["codex", "--oss", "-m", "a:1"]
+    assert "-c" not in captured["cmd"]
+
+
+def test_main_skips_catalog_without_models(
+    run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=())
+
+    def must_not_run(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("no catalog when there are no models")
+
+    monkeypatch.setattr(run_mod, "prepare_model_catalog", must_not_run)
+    captured: dict = {}
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "run",
+        lambda cmd, env=None: captured.update(cmd=cmd) or SimpleNamespace(returncode=0),
+    )
+    assert run_mod.main([]) == 0
+    assert "-c" not in captured["cmd"]
+
+
+def test_main_dry_run_does_not_launch(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     _patch_common(run_mod, monkeypatch, models=("a:1",))
 
     def fail(*a, **k):  # pragma: no cover - must not be called
         raise AssertionError("subprocess.run must not run on --dry-run")
 
     monkeypatch.setattr(run_mod.subprocess, "run", fail)
+    # Catalog generation (which writes a file) must be skipped on dry-run too.
+    monkeypatch.setattr(
+        run_mod,
+        "prepare_model_catalog",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no writes on dry-run")),
+    )
     # ensure_ollama_running must also be skipped on dry-run
     monkeypatch.setattr(
         run_mod,
@@ -302,7 +501,12 @@ def test_main_dry_run_does_not_launch(
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("no serve on dry-run")),
     )
     assert run_mod.main(["--dry-run", "-m", "a:1"]) == 0
-    assert "codex --oss -m a:1" in capsys.readouterr().out
+    out = capsys.readouterr()
+    # The command it *would* run includes the catalog override; nothing is written.
+    assert "codex --oss -m a:1" in out.out
+    assert "model_catalog_json=" in out.out
+    assert not (tmp_path / "col-ollama-catalog.json").exists()
+    assert "would be generated" in out.err
 
 
 def test_main_forwards_exit_code(

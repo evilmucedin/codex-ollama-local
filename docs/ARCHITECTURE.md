@@ -80,9 +80,10 @@ installed):
   directory and the `export PATH=...` line to fix it instead of reporting a hollow
   success.
 - `run.py` — ensures Ollama is reachable (auto-starting `ollama serve` if needed),
-  enumerates the installed models, and launches the real **OpenAI Codex CLI** in its
-  local open-source mode (`codex --oss -m <model>`), forwarding extra args to Codex.
-  This is how the project realizes "Codex, but against local models".
+  enumerates the installed models, exposes them all in Codex's `/model` picker via a
+  generated model catalog (see below), and launches the real **OpenAI Codex CLI** in
+  its local open-source mode (`codex --oss -m <model>`), forwarding extra args to
+  Codex. This is how the project realizes "Codex, but against local models".
 
 Both keep side effects in small injectable functions; tests mock every subprocess
 and HTTP call.
@@ -108,9 +109,32 @@ messages when a prerequisite is missing.
 3. List local models via `GET /api/tags` and report them.
 4. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed >
    `gpt-oss:20b`).
-5. Build and run `codex --oss -m <model> [-- <codex args>]` with `OLLAMA_HOST` set
-   (and the discovered Codex dir on `PATH` so Codex can be found); `--dry-run` prints
-   the command instead of running it.
+5. Generate a *model catalog* so every local model is selectable in Codex's `/model`
+   (unless `--no-catalog`, `--dry-run`, or there are no local models). See below.
+6. Build and run `codex --oss -m <model> [-c model_catalog_json="…"] [-- <codex args>]`
+   with `OLLAMA_HOST` set (and the discovered Codex dir on `PATH` so Codex can be
+   found); `--dry-run` prints the command instead of running it.
+
+#### Exposing all local models in `/model`
+
+In `--oss` mode Codex skips its remote catalog refresh and resolves models from just
+two layers: the catalog *bundled* into the binary, and an optional *local override*
+file named by `model_catalog_json`. The bundled catalog is cloud models only, so a
+plain `codex --oss` shows none of your Ollama models in `/model`.
+
+`run.py` builds the override. It reads Codex's bundled catalog with `codex debug models
+--bundled` (native JSON), then — because the catalog schema is strict and enum-checked
+and drifts across Codex releases — *clones* a real bundled entry (preferring an "oss"
+one) for each installed Ollama model, retargeting only `slug`/`display_name`/
+`description`/`visibility`. That keeps every schema-required field valid for the
+installed Codex version without us hard-coding the schema. The override *replaces* the
+model list, so the bundled entries are carried through too (cloud models stay
+selectable alongside local ones). The result is written to
+`$CODEX_HOME/col-ollama-catalog.json` and passed for the single run via
+`-c model_catalog_json="…"`, leaving the user's `config.toml` untouched.
+
+This is best-effort and never fatal: if `codex debug models` is unavailable (older
+Codex) or the file can't be written, `run.py` warns and launches plain `codex --oss`.
 
 ## Data flow: `col chat "..."`
 

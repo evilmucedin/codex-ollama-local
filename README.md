@@ -38,12 +38,26 @@ Codex's default model; you can still switch between installed models in-session 
 `/model`. Useful flags:
 
 ```bash
-python run.py                 # launch Codex against a local model
+python run.py                 # launch Codex; all local models selectable in /model
 python run.py -m gpt-oss:20b  # set the default model (still switchable in-session)
 python run.py --no-serve      # do not auto-start `ollama serve`
+python run.py --no-catalog    # don't customize Codex's /model list (plain codex --oss)
 python run.py --dry-run       # show what would run, without changing anything
 python run.py -- --sandbox workspace-write   # forward flags to Codex
 ```
+
+### All local models show up in Codex's `/model`
+
+In `--oss` mode Codex normally lists only its built-in model catalog in `/model` (it
+skips the remote catalog refresh), so **your local Ollama models don't appear there**.
+`run.py` fixes this: it reads Codex's own bundled catalog (`codex debug models
+--bundled`, so the entries stay schema-correct for whatever Codex version you have),
+adds one entry per installed Ollama model, writes the result to
+`$CODEX_HOME/col-ollama-catalog.json` (default `~/.codex/…`), and launches Codex with
+`-c model_catalog_json="…"` for that run — no edits to your `config.toml`. The cloud
+models stay listed alongside your local ones. Pass `--no-catalog` to opt out. If your
+Codex build lacks `codex debug models`, `run.py` prints a warning and launches plain
+`codex --oss` (so it never fails on this).
 
 ## Requirements
 
