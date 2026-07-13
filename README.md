@@ -21,7 +21,7 @@ python install.py
 ollama pull qwen2.5-coder:7b
 ollama pull gpt-oss:20b
 
-# 3. Launch Codex with access to ALL your local models
+# 3. Launch Codex against your local models
 python run.py
 ```
 
@@ -32,23 +32,18 @@ that and prints the exact `export PATH=...` line to fix it, and `run.py` locates
 there automatically so it still launches.
 
 `run.py` starts `ollama serve` automatically if it is not already running, lists the
-models Codex will have access to, and then hands off to **`ollama launch codex`** —
-Ollama's built-in Codex integration, which refreshes Codex's model catalog so **every
-model installed in your local Ollama is selectable inside Codex** (switch with `/model`
-during a session). Useful flags:
+local models available, and then launches the real **OpenAI Codex CLI** in its local
+open-source mode — `codex --oss -m <model>` — pointed at your Ollama server. `-m` sets
+Codex's default model; you can still switch between installed models in-session with
+`/model`. Useful flags:
 
 ```bash
-python run.py                 # launch Codex; all local models available
+python run.py                 # launch Codex against a local model
 python run.py -m gpt-oss:20b  # set the default model (still switchable in-session)
+python run.py --no-serve      # do not auto-start `ollama serve`
 python run.py --dry-run       # show what would run, without changing anything
-python run.py --config-only   # configure Codex for Ollama without launching it
 python run.py -- --sandbox workspace-write   # forward flags to Codex
 ```
-
-> The `ollama launch codex` integration is only in newer Ollama builds. On older
-> ones, `run.py` automatically falls back to launching `codex --oss -m <model>`
-> against your local server, so it still starts (update Ollama to get the full
-> multi-model catalog). `--config-only` needs the integration.
 
 ## Requirements
 

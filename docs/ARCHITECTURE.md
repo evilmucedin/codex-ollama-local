@@ -80,46 +80,37 @@ installed):
   directory and the `export PATH=...` line to fix it instead of reporting a hollow
   success.
 - `run.py` — ensures Ollama is reachable (auto-starting `ollama serve` if needed),
-  enumerates the installed models, and hands off to **`ollama launch codex`**,
-  forwarding extra args to Codex. This is how the project realizes "Codex, but
-  against local models".
+  enumerates the installed models, and launches the real **OpenAI Codex CLI** in its
+  local open-source mode (`codex --oss -m <model>`), forwarding extra args to Codex.
+  This is how the project realizes "Codex, but against local models".
 
 Both keep side effects in small injectable functions; tests mock every subprocess
 and HTTP call.
 
-#### Why `run.py` delegates to `ollama launch codex`
+#### Why `run.py` launches `codex --oss`
 
-The requirement is that Codex can use **every** model in the local Ollama, not just
-one. Codex discovers non-default models through a *model catalog* (`model_catalog_json`
-in `~/.codex`), whose JSON schema is strict, largely undocumented, and changes across
-Codex releases (wrong enum values cause hard parse failures). Rather than generate and
-maintain that file ourselves, `run.py` delegates to Ollama's first-party
-`ollama launch codex` integration, which refreshes the catalog from `/api/tags` and
-writes a Codex profile. Ollama keeps this integration current with both tools, so the
-"all models available" behavior stays correct without us tracking Codex's internal
-schema. `run.py`'s own responsibilities are the surrounding orchestration: server
-readiness, model enumeration/reporting, default-model resolution, a safe `--dry-run`,
-and clean error messages when a prerequisite is missing.
+The whole point of the project is to run the genuine OpenAI Codex CLI without a cloud
+API key. Codex ships a first-party local mode for exactly this: `codex --oss` points
+Codex at a local Ollama server (`http://localhost:11434/v1`) and uses a locally
+installed model, and `-m` sets the default (Codex can still switch models in-session
+with `/model`). `run.py` invokes that directly rather than going through any Ollama-side
+integration, so behavior does not depend on which Ollama build is installed. `run.py`'s
+responsibilities are the surrounding orchestration: server readiness, model
+enumeration/reporting, default-model resolution, a safe `--dry-run`, and clean error
+messages when a prerequisite is missing.
 
 `run.py` flow:
 1. Verify `ollama` is installed. Locate `codex`: check `PATH`, and — because
    `npm install -g` frequently installs outside `PATH` — also npm's global bin
    directory (`npm prefix -g`). If found only there, that directory is prepended to
-   the launched process's `PATH`. If found nowhere (and launching), point at
-   `install.py`.
-2. Detect whether the Ollama build supports `ollama launch codex`.
-3. Ensure the server is running (auto-start unless `--no-serve`; skipped on `--dry-run`).
-4. List local models via `GET /api/tags` and report them.
-5. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed when a
-   model is required, e.g. headless `-y`).
-6. Build and run `ollama launch codex [--model M] [-y] [--config] [-- <codex args>]`
-   with `OLLAMA_HOST` set (and the discovered Codex dir on `PATH`, so both Ollama's
-   own lookup and Codex itself can find the binary); `--dry-run` prints the command.
-
-If the `ollama launch codex` integration is absent (older Ollama), step 6 falls back
-to `codex --oss -m <model>` (default model `--model` > `$CODEX_OLLAMA_MODEL` > first
-installed > `gpt-oss:20b`) — the pre-integration launch path — so `run.py` still starts
-Codex instead of erroring. `--config-only` has no fallback and requires the integration.
+   the launched process's `PATH`. If found nowhere, point at `install.py`.
+2. Ensure the server is running (auto-start unless `--no-serve`; skipped on `--dry-run`).
+3. List local models via `GET /api/tags` and report them.
+4. Resolve a default model (`--model` > `$CODEX_OLLAMA_MODEL` > first installed >
+   `gpt-oss:20b`).
+5. Build and run `codex --oss -m <model> [-- <codex args>]` with `OLLAMA_HOST` set
+   (and the discovered Codex dir on `PATH` so Codex can be found); `--dry-run` prints
+   the command instead of running it.
 
 ## Data flow: `col chat "..."`
 
