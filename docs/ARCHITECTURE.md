@@ -115,6 +115,14 @@ messages when a prerequisite is missing.
    with `OLLAMA_HOST` set (and the discovered Codex dir on `PATH` so Codex can be
    found); `--dry-run` prints the command instead of running it.
 
+`--gui` branches at step 6: instead of the CLI it launches the Codex desktop app with
+`codex app [-- <args>]` (still with `OLLAMA_HOST` set and the server ensured). The
+desktop app is a distinct Codex surface — it has its own model picker and accepts none
+of the `--oss`/`-m`/`-c` flags — so steps 4–5 (default-model resolution and catalog
+generation) are skipped in GUI mode. Codex compiles `codex app` in for macOS and
+Windows only (`#[cfg(any(target_os = "macos", target_os = "windows"))]`); on other
+platforms `run.py` warns but still invokes it, letting Codex report availability.
+
 #### Exposing all local models in `/model`
 
 In `--oss` mode Codex skips its remote catalog refresh and resolves models from just

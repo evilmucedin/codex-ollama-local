@@ -29,6 +29,7 @@ Uses only the Python standard library. Cross-platform: Ubuntu, macOS, Windows.
 Usage::
 
     python run.py                       # launch Codex; all local models in /model
+    python run.py --gui                 # launch the Codex desktop app instead
     python run.py -m qwen2.5-coder:7b   # pick the default model
     python run.py --no-serve            # do not auto-start `ollama serve`
     python run.py --no-catalog          # do not customize Codex's /model catalog
@@ -221,6 +222,24 @@ def build_codex_command(
         cmd += ["-c", f'model_catalog_json="{catalog_path}"']
     cmd += list(extra_args)
     return cmd
+
+
+# Platforms for which Codex ships the desktop app (`codex app` is compiled in only
+# for macOS and Windows).
+GUI_PLATFORMS = ("darwin", "win32")
+
+
+def build_gui_command(extra_args: Sequence[str]) -> List[str]:
+    """Build the ``codex app`` command that launches the Codex desktop GUI.
+
+    ``codex app`` opens Codex Desktop for the current workspace (installing it
+    first if it is missing). Unlike the CLI it accepts none of the ``--oss`` /
+    ``-m`` / ``-c`` flags -- the desktop app has its own provider and model
+    picker -- so we forward only the user's extra args (e.g. a workspace path or
+    ``--download-url``) and nothing else.
+    """
+
+    return ["codex", "app"] + list(extra_args)
 
 
 def resolve_model(cli_model: Optional[str], available: Sequence[str]) -> str:
@@ -450,6 +469,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Ollama base URL (default: ${ENV_HOST} or {DEFAULT_HOST}).",
     )
     parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the Codex desktop app (`codex app`) instead of the CLI. The "
+        "GUI manages its own model selection, so -m/--no-catalog are ignored; "
+        "macOS/Windows only.",
+    )
+    parser.add_argument(
         "--no-serve",
         dest="autostart",
         action="store_false",
@@ -524,12 +550,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
 
-    model = resolve_model(args.model, models)
-
     env = dict(os.environ)
     env[ENV_HOST] = host
     if codex_dir:
         env["PATH"] = codex_dir + os.pathsep + env.get("PATH", "")
+
+    # The desktop GUI is a distinct Codex surface. `codex app` opens Codex Desktop
+    # and takes none of the CLI's --oss/-m/-c flags (it has its own model picker),
+    # so we skip catalog generation and default-model selection and just launch it.
+    # Codex ships the app for macOS and Windows only; warn elsewhere but still try,
+    # so Codex itself is the source of truth on availability. The local server is
+    # already up (above), which is what the app needs to talk to Ollama.
+    if args.gui:
+        if sys.platform not in GUI_PLATFORMS:
+            print(
+                "warning: Codex Desktop (`codex app`) is only available on macOS "
+                "and Windows; it may not launch on this platform.",
+                file=sys.stderr,
+            )
+        cmd = build_gui_command(extra)
+        print(f"$ {' '.join(cmd)}")
+        if args.dry_run:
+            return 0
+        return subprocess.run(cmd, env=env).returncode
+
+    model = resolve_model(args.model, models)
 
     # Expose every local model in Codex's /model picker by generating a catalog
     # (skipped when opted out, on --dry-run, or when there are no local models).

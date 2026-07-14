@@ -46,6 +46,18 @@ def test_build_codex_command_with_catalog(run_mod: ModuleType) -> None:
     ]
 
 
+def test_build_gui_command(run_mod: ModuleType) -> None:
+    # The desktop app takes no --oss/-m/-c flags; only extra args are forwarded.
+    assert run_mod.build_gui_command([]) == ["codex", "app"]
+    assert run_mod.build_gui_command(["--download-url", "u", "/ws"]) == [
+        "codex",
+        "app",
+        "--download-url",
+        "u",
+        "/ws",
+    ]
+
+
 # -- model catalog ---------------------------------------------------------
 def test_catalog_path_uses_codex_home(
     run_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -616,3 +628,70 @@ def test_main_reports_ollama_error(
     monkeypatch.setattr(run_mod, "ensure_ollama_running", boom)
     assert run_mod.main([]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+def test_main_gui_launches_desktop_app(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=("a:1",))
+    # A GUI-supported platform so no warning fires.
+    monkeypatch.setattr(run_mod.sys, "platform", "darwin")
+    # In GUI mode we never build a CLI catalog, even though models exist.
+    monkeypatch.setattr(
+        run_mod,
+        "prepare_model_catalog",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no catalog for GUI")),
+    )
+    captured: dict = {}
+
+    def fake_run(cmd, env=None):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(run_mod.subprocess, "run", fake_run)
+    # Extra args after `--` are forwarded to `codex app`.
+    assert run_mod.main(["--gui", "--", "/workspace"]) == 0
+    assert captured["cmd"] == ["codex", "app", "/workspace"]
+    # No --oss/-m/catalog leaks into the GUI command.
+    assert "--oss" not in captured["cmd"]
+    assert "-m" not in captured["cmd"]
+    assert "warning" not in capsys.readouterr().err
+
+
+def test_main_gui_warns_on_unsupported_platform(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=("a:1",))
+    monkeypatch.setattr(run_mod.sys, "platform", "linux")
+    captured: dict = {}
+
+    def fake_run(cmd, env=None):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(run_mod.subprocess, "run", fake_run)
+    # Still attempts the launch (Codex is the source of truth on availability)...
+    assert run_mod.main(["--gui"]) == 0
+    assert captured["cmd"] == ["codex", "app"]
+    # ...but warns that the desktop app is macOS/Windows only.
+    assert "only available on macOS" in capsys.readouterr().err
+
+
+def test_main_gui_dry_run_does_not_launch(
+    run_mod: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    _patch_common(run_mod, monkeypatch, models=("a:1",))
+    monkeypatch.setattr(run_mod.sys, "platform", "darwin")
+
+    def fail(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("subprocess.run must not run on --dry-run")
+
+    monkeypatch.setattr(run_mod.subprocess, "run", fail)
+    assert run_mod.main(["--gui", "--dry-run"]) == 0
+    assert "codex app" in capsys.readouterr().out
